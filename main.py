@@ -23,16 +23,28 @@ def main() -> None:
         messages=[
             {
                 "role": "user",
-                "content": (
-                    "Сформулируй в одном предложении краткое содержание обращения: "
-                    "Покупатель получил поврежденную упаковку и хочет заменить товар."
-                ),
+                "content": "Кратко перескажи: клиент дважды оплатил один заказ.",
             }
         ],
     )
 
-    answer = response.choices[0].message.content
-    print(answer)
+    choice = response.choices[0]
+    answer = choice.message.content
+
+    print("Результат:")
+    print(answer or "Модель не вернула текст")
+
+    print("\nДиагностика:")
+    print(f"ID ответа: {response.id}")
+    print(f"Модель: {response.model}")
+    print(f"Причина завершения: {choice.finish_reason}")
+
+    if response.usage is not None:
+        print(f"Входные токены: {response.usage.prompt_tokens}")
+        print(f"Выходные токены: {response.usage.completion_tokens}")
+        print(f"Всего токенов: {response.usage.total_tokens}")
+    else:
+        print("Провайдер не вернул статистику токенов")
 
 
 if __name__ == "__main__":

@@ -1,28 +1,38 @@
 import os
+import sys
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
 
-BASE_URL = "https://api.mistral.ai/v1"
-
-
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
     load_dotenv()
 
-    token = os.getenv("MISTRAL_API_KEY")
-    if not token:
-        raise SystemExit(
-            "Не найдена переменная LLM_API_KEY. "
-            "Проверьте файл .env в корне проекта."
-        )
+    model = os.getenv("MODEL")
+    base_url = os.getenv("BASE_URL")
+    token = os.getenv("MISTRAL_API_KEY", "ollama")
 
     client = OpenAI(
-        base_url=BASE_URL,
+        base_url=base_url,
         api_key=token,
     )
 
-    print("Файл .env загружен, токен найден, клиент создан")
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "Сформулируй в одном предложении краткое содержание обращения: "
+                    "Покупатель получил поврежденную упаковку и хочет заменить товар."
+                ),
+            }
+        ],
+    )
+
+    answer = response.choices[0].message.content
+    print(answer)
 
 
 if __name__ == "__main__":

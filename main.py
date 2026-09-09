@@ -8,6 +8,16 @@ from openai import OpenAI
 
 
 
+def print_usage(usage) -> None:
+    if usage is None:
+        print("Провайдер не вернул статистику токенов")
+        return
+
+    print(f"Входные токены: {usage.prompt_tokens}")
+    print(f"Выходные токены: {usage.completion_tokens}")
+    print(f"Всего токенов: {usage.total_tokens}")
+
+
 def summarize_request(client: OpenAI, model: str, user_text: str) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
     text = user_text.strip()
@@ -67,10 +77,7 @@ def summarize_request(client: OpenAI, model: str, user_text: str) -> None:
     print(f"Завершение: {choice.finish_reason}")
     print(f"Время: {elapsed_seconds:.2f} с")
 
-    if response.usage is not None:
-        print(f"Входные токены: {response.usage.prompt_tokens}")
-        print(f"Выходные токены: {response.usage.completion_tokens}")
-        print(f"Всего токенов: {response.usage.total_tokens}")
+    print_usage(response.usage)
 
     print(f"ID ответа: {response.id}")
 

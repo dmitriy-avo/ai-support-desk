@@ -30,7 +30,12 @@ def build_messages(user_text: str, system_instructions: str) -> list[dict[str, s
     ]
 
 
-def summarize_request(client: OpenAI, model: str, user_text: str, system_instructions: str) -> None:
+def summarize_request(client: OpenAI,
+                      model: str,
+                      user_text: str,
+                      system_instructions: str,
+                      temperature: float,
+                      max_completion_tokens: int,) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
     text = user_text.strip()
     if not text:
@@ -42,7 +47,9 @@ def summarize_request(client: OpenAI, model: str, user_text: str, system_instruc
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=build_messages(user_text, system_instructions)
+            messages=build_messages(user_text, system_instructions),
+            temperature=temperature,
+            max_tokens=max_completion_tokens,
         )
     except openai.AuthenticationError:
         print("Ошибка авторизации: проверьте LLM_API_KEY.")
@@ -70,6 +77,21 @@ def summarize_request(client: OpenAI, model: str, user_text: str, system_instruc
 
     elapsed_seconds = perf_counter() - started_at
     choice = response.choices[0]
+
+    if choice.finish_reason == "length":
+        print(
+            "Ответ модели остановлен из-за ограничения длины. "
+            "Увеличьте MAX_OUTPUT_TOKENS или сократите задачу."
+        )
+        return
+
+    if choice.finish_reason != "stop":
+        print(
+            "Модель не вернула готовое резюме. "
+            f"Причина завершения: {choice.finish_reason}."
+        )
+        return
+
     answer = choice.message.content
 
     print("\nРезультат:")
@@ -93,6 +115,8 @@ def main() -> None:
     base_url = os.getenv("BASE_URL")
     token = os.getenv("MISTRAL_API_KEY", "ollama")
     system_instructions = os.getenv("SYSTEM_INSTRUCTION", "")
+    temperature = float(os.getenv("TEMPERATURE"))
+    max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS"))
 
     client = OpenAI(
         base_url=base_url,
@@ -100,7 +124,7 @@ def main() -> None:
     )
 
     user_text = input("Введите текст обращения: ")
-    summarize_request(client, model, user_text, system_instructions)
+    summarize_request(client, model, user_text, system_instructions, temperature, max_output_tokens)
 
 
 if __name__ == "__main__":

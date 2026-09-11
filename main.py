@@ -29,6 +29,18 @@ def build_messages(user_text: str, system_instructions: str) -> list[dict[str, s
         },
     ]
 
+def validate_summary(summary: str | None) -> str:
+    if summary is None:
+        raise ValueError("Модель не вернула текст")
+
+    cleaned = summary.strip()
+    if not cleaned:
+        raise ValueError("Модель вернула пустой ответ")
+    if len(cleaned) > 300:
+        raise ValueError("Резюме получилось слишком длинным")
+
+    return cleaned
+
 
 def summarize_request(client: OpenAI,
                       model: str,
@@ -92,10 +104,14 @@ def summarize_request(client: OpenAI,
         )
         return
 
-    answer = choice.message.content
+    try:
+        answer = validate_summary(choice.message.content)
+    except ValueError as error:
+        print(f"Некорректный ответ модели: {error}")
+        return
 
     print("\nРезультат:")
-    print(answer or "Модель не вернула текстовый ответ")
+    print(answer)
 
     print("\nМетрики:")
     print(f"Модель: {response.model}")

@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 
-
 def print_usage(usage) -> None:
     if usage is None:
         print("Провайдер не вернул статистику токенов")
@@ -18,7 +17,20 @@ def print_usage(usage) -> None:
     print(f"Всего токенов: {usage.total_tokens}")
 
 
-def summarize_request(client: OpenAI, model: str, user_text: str) -> None:
+def build_messages(user_text: str, system_instructions: str) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": system_instructions,
+        },
+        {
+            "role": "user",
+            "content": f"Обращение:\n{user_text}",
+        },
+    ]
+
+
+def summarize_request(client: OpenAI, model: str, user_text: str, system_instructions: str) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
     text = user_text.strip()
     if not text:
@@ -30,16 +42,7 @@ def summarize_request(client: OpenAI, model: str, user_text: str) -> None:
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Сформулируй краткое содержание обращения в одном "
-                        "предложении. Не добавляй факты, которых нет в тексте.\n\n"
-                        f"Обращение: {text}"
-                    ),
-                }
-            ],
+            messages=build_messages(user_text, system_instructions)
         )
     except openai.AuthenticationError:
         print("Ошибка авторизации: проверьте LLM_API_KEY.")
@@ -89,6 +92,7 @@ def main() -> None:
     model = os.getenv("MODEL")
     base_url = os.getenv("BASE_URL")
     token = os.getenv("MISTRAL_API_KEY", "ollama")
+    system_instructions = os.getenv("SYSTEM_INSTRUCTION", "")
 
     client = OpenAI(
         base_url=base_url,
@@ -96,7 +100,7 @@ def main() -> None:
     )
 
     user_text = input("Введите текст обращения: ")
-    summarize_request(client, model, user_text)
+    summarize_request(client, model, user_text, system_instructions)
 
 
 if __name__ == "__main__":

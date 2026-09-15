@@ -1,10 +1,10 @@
-import os
-import sys
 from time import perf_counter
 
 import openai
-from dotenv import load_dotenv
 from openai import OpenAI
+from pydantic import ValidationError
+
+from config import Settings
 
 
 def print_usage(usage) -> None:
@@ -17,7 +17,8 @@ def print_usage(usage) -> None:
     print(f"Всего токенов: {usage.total_tokens}")
 
 
-def build_messages(user_text: str, system_instructions: str) -> list[dict[str, str]]:
+def build_messages(user_text: str, settings: Settings) -> list[dict[str, str]]:
+    system_instructions = settings.system_instructions
     return [
         {
             "role": "system",
@@ -43,11 +44,8 @@ def validate_summary(summary: str | None) -> str:
 
 
 def summarize_request(client: OpenAI,
-                      model: str,
                       user_text: str,
-                      system_instructions: str,
-                      temperature: float,
-                      max_completion_tokens: int,) -> None:
+                      settings: Settings,) -> None:
     """Кратко пересказывает обращение и печатает метрики запроса."""
     text = user_text.strip()
     if not text:
@@ -58,10 +56,10 @@ def summarize_request(client: OpenAI,
 
     try:
         response = client.chat.completions.create(
-            model=model,
-            messages=build_messages(user_text, system_instructions),
-            temperature=temperature,
-            max_tokens=max_completion_tokens,
+            model=settings.model,
+            messages=build_messages(user_text, settings),
+            temperature=settings.temperature,
+            max_tokens=settings.max_output_tokens,
         )
     except openai.AuthenticationError:
         print("Ошибка авторизации: проверьте LLM_API_KEY.")
@@ -92,8 +90,8 @@ def summarize_request(client: OpenAI,
 
     if choice.finish_reason == "length":
         print(
-            "Ответ модели остановлен из-за ограничения длины. "
-            "Увеличьте MAX_OUTPUT_TOKENS или сократите задачу."
+            "Ответ модели остановлен из-за ограничения длины: "
+            f"{settings.max_output_tokens} токенов."
         )
         return
 
@@ -123,25 +121,27 @@ def summarize_request(client: OpenAI,
     print(f"ID ответа: {response.id}")
 
 
-def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")
-    load_dotenv()
 
-    model = os.getenv("MODEL")
-    base_url = os.getenv("BASE_URL")
-    token = os.getenv("MISTRAL_API_KEY", "ollama")
-    system_instructions = os.getenv("SYSTEM_INSTRUCTION", "")
-    temperature = float(os.getenv("TEMPERATURE"))
-    max_output_tokens = int(os.getenv("MAX_OUTPUT_TOKENS"))
+def main() -> None:
+    try:
+        settings = Settings()
+    except ValidationError as error:
+        print("Ошибка конфигурации:")
+        for issue in error.errors():
+            field = ".".join(str(part) for part in issue["loc"])
+            print(f"- {field}: {issue['msg']}")
+        return
 
     client = OpenAI(
-        base_url=base_url,
-        api_key=token,
+        base_url=str(settings.base_url),
+        api_key=settings.llm_api_key.get_secret_value(),
     )
 
-    user_text = input("Введите текст обращения: ")
-    summarize_request(client, model, user_text, system_instructions, temperature, max_output_tokens)
+    print(f"Окружение: {settings.app_env}")
+    print(f"Модель: {settings.model}")
 
+    user_text = input("Введите текст обращения: ")
+    summarize_request(client, user_text, settings)
 
 if __name__ == "__main__":
     main()

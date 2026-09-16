@@ -1,10 +1,11 @@
 from time import perf_counter
 
-import openai
 from pydantic import ValidationError
 
 from app.config import Settings
 from app.llm.client import LLMClient, LLMResult
+from app.llm.errors import LLMClientError
+
 
 def print_usage(result: LLMResult) -> None:
     if result.total_tokens is None:
@@ -53,28 +54,8 @@ def summarize_request(client: LLMClient, user_text: str, settings: Settings) -> 
 
     try:
         result = client.generate(build_messages(text, settings))
-    except openai.AuthenticationError:
-        print("Ошибка авторизации: проверьте LLM_API_KEY.")
-        return
-    except openai.PermissionDeniedError:
-        print("Нет доступа к модели: проверьте разрешения API-ключа.")
-        return
-    except openai.RateLimitError:
-        print("Достигнут лимит запросов провайдера. Повторите запрос позднее.")
-        return
-    except openai.APITimeoutError:
-        print("Провайдер не успел ответить за отведенное время.")
-        return
-    except openai.APIConnectionError:
-        print("Не удалось соединиться с провайдером. Проверьте сеть.")
-        return
-    except openai.APIStatusError as error:
-        if error.status_code == 402:
-            print("Недостаточно средств на балансе провайдера.")
-        else:
-            print(f"API вернул ошибку со статусом {error.status_code}.")
-        if error.request_id:
-            print(f"Request ID: {error.request_id}")
+    except LLMClientError as error:
+        print(f"Не удалось получить ответ модели: {error}")
         return
 
     elapsed_seconds = perf_counter() - started_at

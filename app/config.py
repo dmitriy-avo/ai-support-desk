@@ -32,9 +32,6 @@ class Settings(BaseSettings):
         validation_alias="APP_ENV",
     )
 
-    system_instructions: str = Field(
-        min_length=1,
-        validation_alias="SYSTEM_INSTRUCTION",)
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -3,30 +3,10 @@ from time import perf_counter
 
 from app.llm.client import LLMClient, Message
 from app.llm.errors import LLMClientError
+from app.prompts.support_summary import SUPPORT_SUMMARY_PROMPT
 
 
-DEVELOPER_INSTRUCTION = """
-Ты помогаешь оператору службы поддержки кратко пересказывать
-обращения клиентов.
-
-Цель:
-Сформулируй основную проблему клиента одним предложением.
-
-Правила:
-- Используй только факты, явно указанные в обращении.
-- Если они указаны, сохраняй номер заказа, дату и название товара.
-- Не добавляй советы, решения, обещания и оценки.
-- Если деталь отсутствует или неясна, опусти ее.
-
-Порядок работы:
-1. Определи основную проблему клиента.
-2. Выбери только факты, необходимые для понимания проблемы.
-3. Удали приветствия, повторы и второстепенные подробности.
-4. Сформулируй итоговый ответ в требуемом формате.
-
-Формат ответа:
-Одно самостоятельное предложение без заголовка, списка и вступления.
-""".strip()
+DEVELOPER_INSTRUCTION = SUPPORT_SUMMARY_PROMPT.render(response_language="русском")
 
 
 class SupportServiceError(RuntimeError):
@@ -37,6 +17,8 @@ class SupportServiceError(RuntimeError):
 class SupportSummary:
     text: str
     model: str
+    prompt_id: str
+    prompt_version: str
     elapsed_seconds: float
     prompt_tokens: int | None
     completion_tokens: int | None
@@ -77,6 +59,8 @@ class SupportService:
         return SupportSummary(
             text=summary,
             model=llm_result.model,
+            prompt_id=SUPPORT_SUMMARY_PROMPT.prompt_id,
+            prompt_version=SUPPORT_SUMMARY_PROMPT.version,
             elapsed_seconds=elapsed_seconds,
             prompt_tokens=llm_result.prompt_tokens,
             completion_tokens=llm_result.completion_tokens,

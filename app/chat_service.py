@@ -9,6 +9,10 @@ from app.chat_history import (
 from app.llm.client import LLMClient, Message
 from app.llm.errors import LLMClientError
 from app.prompts.support_chat import SUPPORT_CHAT_PROMPT
+from app.conversation_summary_service import (
+    ConversationSummaryError,
+    ConversationSummaryService,
+)
 
 
 CHAT_INSTRUCTION = SUPPORT_CHAT_PROMPT.render()
@@ -34,11 +38,14 @@ class ChatReply:
     completion_tokens: int | None
     total_tokens: int | None
     response_id: str
+    summary_updated: bool
+    has_summary: bool
 
 
 @dataclass
 class ChatSession:
     messages: list[Message] = field(default_factory=list)
+    summary: str | None = None
     lock: Lock = field(default_factory=Lock)
 
 
@@ -47,12 +54,13 @@ class ChatService:
         self,
         llm_client: LLMClient,
         history_policy: SlidingWindowHistory,
+        summary_service: ConversationSummaryService,
     ) -> None:
         self._llm_client = llm_client
         self._history_policy = history_policy
+        self._summary_service = summary_service
         self._sessions: dict[str, ChatSession] = {}
         self._sessions_lock = Lock()
-
     def reply(
         self,
         session_id: str,
@@ -69,12 +77,15 @@ class ChatService:
         with session.lock:
             developer_message = self._build_developer_message()
             user_message = self._build_user_message(text)
+            summary_message = self._build_summary_message(session.summary)
+            context_messages = [summary_message] if summary_message is not None else []
 
             try:
                 prepared = self._history_policy.prepare(
                     developer_message=developer_message,
                     history=session.messages,
                     user_message=user_message,
+                    context_messages=context_messages,
                 )
             except ChatHistoryError as error:
                 raise ChatServiceError(
@@ -82,6 +93,38 @@ class ChatService:
                 ) from error
 
             started_at = perf_counter()
+            new_summary = session.summary
+            summary_updated = False
+
+            if prepared.removed_history_messages > 0:
+                try:
+                    new_summary = self._summary_service.summarize(
+                        previous_summary=session.summary,
+                        messages=session.messages,
+                    )
+                except ConversationSummaryError as error:
+                    raise ChatServiceError(
+                        f"Не удалось сократить историю: {error}"
+                    ) from error
+
+                summary_updated = True
+                summary_message = self._build_summary_message(new_summary)
+                if summary_message is None:
+                    raise ChatServiceError("Не удалось подготовить новое summary.")
+
+                try:
+                    prepared = self._history_policy.prepare(
+                        developer_message=developer_message,
+                        history=[],
+                        user_message=user_message,
+                        context_messages=[summary_message],
+                    )
+                except ChatHistoryError as error:
+                    raise ChatServiceError(
+                        "Новое summary не помещается "
+                        f"в бюджет: {error}"
+                    ) from error
+
             try:
                 llm_result = self._llm_client.generate(prepared.messages)
             except LLMClientError as error:
@@ -99,12 +142,17 @@ class ChatService:
                 )
 
             reply_text = self._validate_reply(llm_result.text)
-
             assistant_message: Message = {
                 "role": "assistant",
                 "content": reply_text,
             }
-            session.messages.extend([user_message, assistant_message])
+
+            if summary_updated:
+                session.summary = new_summary
+                session.messages = [user_message, assistant_message]
+            else:
+                session.messages.extend([user_message, assistant_message])
+
             history_messages = len(session.messages)
 
         return ChatReply(
@@ -122,6 +170,8 @@ class ChatService:
             completion_tokens=llm_result.completion_tokens,
             total_tokens=llm_result.total_tokens,
             response_id=llm_result.response_id,
+            summary_updated=summary_updated,
+            has_summary=session.summary is not None,
         )
 
     def reset_session(self, session_id: str) -> None:
@@ -135,6 +185,7 @@ class ChatService:
 
         with session.lock:
             session.messages.clear()
+            session.summary = None
 
     def _get_or_create_session(
         self,
@@ -169,6 +220,22 @@ class ChatService:
                 "<customer_message>\n"
                 f"{user_text}\n"
                 "</customer_message>"
+            ),
+        }
+
+    @staticmethod
+    def _build_summary_message(
+        summary: str | None,
+    ) -> Message | None:
+        if summary is None:
+            return None
+
+        return {
+            "role": "user",
+            "content": (
+                "<conversation_summary>\n"
+                f"{summary}\n"
+                "</conversation_summary>"
             ),
         }
 

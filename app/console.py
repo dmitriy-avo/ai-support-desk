@@ -48,6 +48,14 @@ def print_usage(result: ChatReply) -> None:
 
     print(f"Входные токены: {result.prompt_tokens}")
     print(f"Выходные токены: {result.completion_tokens}")
+    print(
+        "Summary сохранено: "
+        f"{'да' if result.has_summary else 'нет'}"
+    )
+    print(
+        "Summary обновлено на этом ходу: "
+        f"{'да' if result.summary_updated else 'нет'}"
+    )
     print(f"Всего токенов: {result.total_tokens}")
 
 

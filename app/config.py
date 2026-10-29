@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         gt=0.0,
         validation_alias="REQUEST_TIMEOUT_SECONDS",
     )
+    stream_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0.0,
+        validation_alias="STREAM_TIMEOUT_SECONDS",
+    )
     max_retries: int = Field(default=2, ge=0, le=5, validation_alias="MAX_RETRIES")
     app_env: Literal["development", "test", "production"] = Field(
         default="development",

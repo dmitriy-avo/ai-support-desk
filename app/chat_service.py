@@ -1,12 +1,18 @@
 from dataclasses import dataclass, field
 from threading import Lock
 from time import perf_counter
+from collections.abc import Generator
 
 from app.chat_history import (
     ChatHistoryError,
     SlidingWindowHistory,
 )
-from app.llm.client import LLMClient, Message
+from app.llm.client import (
+    LLMClient,
+    LLMStreamCompleted,
+    LLMTextDelta,
+    Message,
+)
 from app.llm.errors import LLMClientError
 from app.prompts.support_chat import SUPPORT_CHAT_PROMPT
 from app.conversation_summary_service import (
@@ -41,6 +47,18 @@ class ChatReply:
     summary_updated: bool
     has_summary: bool
 
+@dataclass(frozen=True)
+class ChatTextDelta:
+    text: str
+
+
+@dataclass(frozen=True)
+class ChatStreamCompleted:
+    result: ChatReply
+
+
+ChatStreamEvent = ChatTextDelta | ChatStreamCompleted
+
 
 @dataclass
 class ChatSession:
@@ -61,11 +79,26 @@ class ChatService:
         self._summary_service = summary_service
         self._sessions: dict[str, ChatSession] = {}
         self._sessions_lock = Lock()
-    def reply(
-        self,
-        session_id: str,
-        user_text: str,
-    ) -> ChatReply:
+
+    def reply(self, session_id: str, user_text: str) -> ChatReply:
+        result: ChatReply | None = None
+
+        for event in self.stream_reply(session_id, user_text):
+            if isinstance(event, ChatStreamCompleted):
+                result = event.result
+
+        if result is None:
+            raise ChatServiceError(
+                "Поток завершился без итогового результата."
+            )
+
+        return result
+
+    def stream_reply(
+            self,
+            session_id: str,
+            user_text: str,
+    ) -> Generator[ChatStreamEvent, None, None]:
         session_key = self._normalize_session_id(session_id)
 
         text = user_text.strip()
@@ -78,7 +111,9 @@ class ChatService:
             developer_message = self._build_developer_message()
             user_message = self._build_user_message(text)
             summary_message = self._build_summary_message(session.summary)
-            context_messages = [summary_message] if summary_message is not None else []
+            context_messages = (
+                [summary_message] if summary_message is not None else []
+            )
 
             try:
                 prepared = self._history_policy.prepare(
@@ -110,7 +145,9 @@ class ChatService:
                 summary_updated = True
                 summary_message = self._build_summary_message(new_summary)
                 if summary_message is None:
-                    raise ChatServiceError("Не удалось подготовить новое summary.")
+                    raise ChatServiceError(
+                        "Не удалось подготовить новое summary."
+                    )
 
                 try:
                     prepared = self._history_policy.prepare(
@@ -125,23 +162,38 @@ class ChatService:
                         f"в бюджет: {error}"
                     ) from error
 
+            reply_parts: list[str] = []
+            llm_completed: LLMStreamCompleted | None = None
+
             try:
-                llm_result = self._llm_client.generate(prepared.messages)
+                for event in self._llm_client.stream(prepared.messages):
+                    if isinstance(event, LLMTextDelta):
+                        reply_parts.append(event.text)
+                        yield ChatTextDelta(text=event.text)
+                    elif isinstance(event, LLMStreamCompleted):
+                        llm_completed = event
             except LLMClientError as error:
                 raise ChatServiceError(
                     f"Не удалось получить ответ модели: {error}"
                 ) from error
+
             elapsed_seconds = perf_counter() - started_at
 
-            if llm_result.finish_reason == "length":
-                raise ChatServiceError("Ответ остановлен из-за ограничения длины.")
-            if llm_result.finish_reason != "stop":
+            if llm_completed is None:
+                raise ChatServiceError(
+                    "Поток завершился без итоговых метаданных."
+                )
+            if llm_completed.finish_reason == "length":
+                raise ChatServiceError(
+                    "Ответ остановлен из-за ограничения длины."
+                )
+            if llm_completed.finish_reason != "stop":
                 raise ChatServiceError(
                     "Модель не вернула готовый ответ. "
-                    f"Причина завершения: {llm_result.finish_reason}."
+                    f"Причина завершения: {llm_completed.finish_reason}."
                 )
 
-            reply_text = self._validate_reply(llm_result.text)
+            reply_text = self._validate_reply("".join(reply_parts))
             assistant_message: Message = {
                 "role": "assistant",
                 "content": reply_text,
@@ -155,24 +207,26 @@ class ChatService:
 
             history_messages = len(session.messages)
 
-        return ChatReply(
-            text=reply_text,
-            session_id=session_key,
-            history_messages=history_messages,
-            context_history_messages=prepared.context_history_messages,
-            removed_history_messages=prepared.removed_history_messages,
-            estimated_prompt_tokens=prepared.estimated_tokens,
-            model=llm_result.model,
-            prompt_id=SUPPORT_CHAT_PROMPT.prompt_id,
-            prompt_version=SUPPORT_CHAT_PROMPT.version,
-            elapsed_seconds=elapsed_seconds,
-            prompt_tokens=llm_result.prompt_tokens,
-            completion_tokens=llm_result.completion_tokens,
-            total_tokens=llm_result.total_tokens,
-            response_id=llm_result.response_id,
-            summary_updated=summary_updated,
-            has_summary=session.summary is not None,
-        )
+            result = ChatReply(
+                text=reply_text,
+                session_id=session_key,
+                history_messages=history_messages,
+                context_history_messages=prepared.context_history_messages,
+                removed_history_messages=prepared.removed_history_messages,
+                estimated_prompt_tokens=prepared.estimated_tokens,
+                model=llm_completed.model,
+                prompt_id=SUPPORT_CHAT_PROMPT.prompt_id,
+                prompt_version=SUPPORT_CHAT_PROMPT.version,
+                elapsed_seconds=elapsed_seconds,
+                prompt_tokens=llm_completed.prompt_tokens,
+                completion_tokens=llm_completed.completion_tokens,
+                total_tokens=llm_completed.total_tokens,
+                response_id=llm_completed.response_id,
+                summary_updated=summary_updated,
+                has_summary=session.summary is not None,
+            )
+
+        yield ChatStreamCompleted(result=result)
 
     def reset_session(self, session_id: str) -> None:
         session_key = self._normalize_session_id(session_id)

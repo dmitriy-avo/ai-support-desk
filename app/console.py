@@ -1,43 +1,11 @@
-# from app.support_service import SupportService, SupportServiceError, SupportSummary
-#
-#
-# def print_usage(result: SupportSummary) -> None:
-#     if result.total_tokens is None:
-#         print("Провайдер не вернул статистику токенов.")
-#         return
-#
-#     print(f"Входные токены: {result.prompt_tokens}")
-#     print(f"Выходные токены: {result.completion_tokens}")
-#     print(f"Всего токенов: {result.total_tokens}")
-#
-#
-# def run_console(service: SupportService, app_env: str, configured_model: str) -> None:
-#     print(f"Окружение: {app_env}")
-#     print(f"Настроенная модель: {configured_model}")
-#
-#     user_text = input("Введите текст обращения: ")
-#
-#     try:
-#         result = service.summarize(user_text)
-#     except SupportServiceError as error:
-#         print(f"Не удалось создать резюме: {error}")
-#         return
-#
-#     print("\nРезюме обращения:")
-#     print(result.text)
-#     print("\nМетрики запроса:")
-#     print(f"Промпт: {result.prompt_id}@{result.prompt_version}")
-#     print(f"Модель ответа: {result.model}")
-#     print(f"Время ответа: {result.elapsed_seconds:.2f} с")
-#     print_usage(result)
-#     print(f"ID ответа: {result.response_id}")
-
 from uuid import uuid4
 
 from app.chat_service import (
     ChatReply,
     ChatService,
     ChatServiceError,
+    ChatStreamCompleted,
+    ChatTextDelta,
 )
 
 
@@ -48,6 +16,24 @@ def print_usage(result: ChatReply) -> None:
 
     print(f"Входные токены: {result.prompt_tokens}")
     print(f"Выходные токены: {result.completion_tokens}")
+    print(f"Всего токенов: {result.total_tokens}")
+
+
+def print_metadata(result: ChatReply) -> None:
+    print(f"Session ID ответа: {result.session_id}")
+    print(f"Сообщений в истории: {result.history_messages}")
+    print(
+        "Сообщений истории в запросе: "
+        f"{result.context_history_messages}"
+    )
+    print(
+        "Сообщений истории отброшено: "
+        f"{result.removed_history_messages}"
+    )
+    print(
+        "Оценка входных токенов до запроса: "
+        f"{result.estimated_prompt_tokens}"
+    )
     print(
         "Summary сохранено: "
         f"{'да' if result.has_summary else 'нет'}"
@@ -56,7 +42,10 @@ def print_usage(result: ChatReply) -> None:
         "Summary обновлено на этом ходу: "
         f"{'да' if result.summary_updated else 'нет'}"
     )
-    print(f"Всего токенов: {result.total_tokens}")
+    print(f"Промпт: {result.prompt_id}@{result.prompt_version}")
+    print(f"Время ответа: {result.elapsed_seconds:.2f} с")
+    print_usage(result)
+    print(f"ID ответа: {result.response_id}")
 
 
 def run_console(
@@ -70,6 +59,7 @@ def run_console(
     session_id = uuid4().hex
     print(f"Session ID: {session_id}")
     print("Команды: /new — новый диалог, /exit — выход.")
+    print("Во время ответа нажмите Ctrl+C, чтобы отменить генерацию.")
 
     while True:
         user_text = input("\nВы: ")
@@ -84,19 +74,36 @@ def run_console(
             print(f"Новый Session ID: {session_id}")
             continue
 
+        stream = service.stream_reply(session_id, user_text)
+        result: ChatReply | None = None
+        received_text = False
+
+        print("Assistant: ", end="", flush=True)
+
         try:
-            result = service.reply(session_id, user_text)
+            for event in stream:
+                if isinstance(event, ChatTextDelta):
+                    received_text = True
+                    print(event.text, end="", flush=True)
+                elif isinstance(event, ChatStreamCompleted):
+                    result = event.result
+        except KeyboardInterrupt:
+            stream.close()
+            print("\nГенерация отменена. Ответ не сохранен в истории.")
+            continue
         except ChatServiceError as error:
-            print(f"Ошибка чата: {error}")
+            stream.close()
+            print()
+            if received_text:
+                print(f"Поток прерван: {error}")
+            else:
+                print(f"Ошибка чата: {error}")
             continue
 
-        print(f"Assistant: {result.text}")
-        print(f"Session ID ответа: {result.session_id}")
-        print(f"Сообщений в истории: {result.history_messages}")
-        print(f"Сообщений истории в запросе: {result.context_history_messages}")
-        print(f"Сообщений истории отброшено: {result.removed_history_messages}")
-        print(f"Оценка входных токенов до запроса: {result.estimated_prompt_tokens}")
-        print(f"Промпт: {result.prompt_id}@{result.prompt_version}")
-        print(f"Время ответа: {result.elapsed_seconds:.2f} с")
-        print_usage(result)
-        print(f"ID ответа: {result.response_id}")
+        print()
+
+        if result is None:
+            print("Ошибка чата: поток завершился без результата.")
+            continue
+
+        print_metadata(result)

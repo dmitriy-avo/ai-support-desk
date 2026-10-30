@@ -15,13 +15,13 @@ from app.llm.client import (
 )
 from app.llm.errors import LLMClientError
 from app.prompts.support_chat import SUPPORT_CHAT_PROMPT
+from app.prompts.template import PromptTemplate
 from app.conversation_summary_service import (
     ConversationSummaryError,
     ConversationSummaryService,
 )
 
 
-CHAT_INSTRUCTION = SUPPORT_CHAT_PROMPT.render()
 
 
 class ChatServiceError(RuntimeError):
@@ -69,14 +69,17 @@ class ChatSession:
 
 class ChatService:
     def __init__(
-        self,
-        llm_client: LLMClient,
-        history_policy: SlidingWindowHistory,
-        summary_service: ConversationSummaryService,
+            self,
+            llm_client: LLMClient,
+            history_policy: SlidingWindowHistory,
+            summary_service: ConversationSummaryService,
+            prompt: PromptTemplate = SUPPORT_CHAT_PROMPT,
     ) -> None:
         self._llm_client = llm_client
         self._history_policy = history_policy
         self._summary_service = summary_service
+        self._prompt = prompt
+        self._chat_instruction = prompt.render()
         self._sessions: dict[str, ChatSession] = {}
         self._sessions_lock = Lock()
 
@@ -215,8 +218,8 @@ class ChatService:
                 removed_history_messages=prepared.removed_history_messages,
                 estimated_prompt_tokens=prepared.estimated_tokens,
                 model=llm_completed.model,
-                prompt_id=SUPPORT_CHAT_PROMPT.prompt_id,
-                prompt_version=SUPPORT_CHAT_PROMPT.version,
+                prompt_id=self._prompt.prompt_id,
+                prompt_version=self._prompt.version,
                 elapsed_seconds=elapsed_seconds,
                 prompt_tokens=llm_completed.prompt_tokens,
                 completion_tokens=llm_completed.completion_tokens,
@@ -259,11 +262,11 @@ class ChatService:
             raise ChatServiceError("Session ID не должен быть пустым.")
         return session_key
 
-    @staticmethod
-    def _build_developer_message() -> Message:
+
+    def _build_developer_message(self) -> Message:
         return {
             "role": "system",
-            "content": CHAT_INSTRUCTION,
+            "content": self._chat_instruction,
         }
 
     @staticmethod

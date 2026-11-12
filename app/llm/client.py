@@ -1,3 +1,6 @@
+from typing import Any
+
+from openai.types.chat import ChatCompletion
 from dataclasses import dataclass
 
 from openai import OpenAI
@@ -22,11 +25,13 @@ from app.llm.errors import (
 
 
 Message = dict[str, str]
+JsonSchema = dict[str, Any]
 
 
 @dataclass(frozen=True)
 class LLMResult:
     text: str | None
+    refusal: str | None
     model: str
     finish_reason: str | None
     prompt_tokens: int | None
@@ -68,6 +73,21 @@ class LLMClient:
         except openai.APIError as error:
             raise self._convert_error(error) from error
 
+    def generate_structured(
+            self,
+            messages: list[Message],
+            schema_name: str,
+            schema: JsonSchema,
+    ) -> LLMResult:
+        try:
+            return self._generate_structured_once(
+                messages=messages,
+                schema_name=schema_name,
+                schema=schema,
+            )
+        except openai.APIError as error:
+            raise self._convert_error(error) from error
+
     def stream(
             self,
             messages: list[Message],
@@ -99,6 +119,55 @@ class LLMClient:
             prompt_tokens=usage.prompt_tokens if usage is not None else None,
             completion_tokens=usage.completion_tokens if usage is not None else None,
             total_tokens=usage.total_tokens if usage is not None else None,
+            response_id=response.id,
+        )
+
+    def _generate_structured_once(
+            self,
+            messages: list[Message],
+            schema_name: str,
+            schema: JsonSchema,
+    ) -> LLMResult:
+        response = self._client.chat.completions.create(
+            model=self._settings.model,
+            messages=messages,
+            temperature=self._settings.temperature,
+            max_completion_tokens=self._settings.max_output_tokens,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        )
+        return self._to_result(response)
+
+    @staticmethod
+    def _to_result(response: ChatCompletion) -> LLMResult:
+        if not response.choices:
+            raise LLMProviderError(
+                "Провайдер вернул ответ без вариантов продолжения."
+            )
+
+        choice = response.choices[0]
+        usage = response.usage
+
+        return LLMResult(
+            text=choice.message.content,
+            refusal=choice.message.refusal,
+            model=response.model,
+            finish_reason=choice.finish_reason,
+            prompt_tokens=(
+                usage.prompt_tokens if usage is not None else None
+            ),
+            completion_tokens=(
+                usage.completion_tokens if usage is not None else None
+            ),
+            total_tokens=(
+                usage.total_tokens if usage is not None else None
+            ),
             response_id=response.id,
         )
 

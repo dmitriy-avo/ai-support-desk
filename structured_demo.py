@@ -1,7 +1,7 @@
 import json
 
 from pydantic import ValidationError
-
+from app.models.support_request import SupportRequestAnalysis
 from app.config import Settings
 from app.llm.client import LLMClient, LLMResult, Message
 from app.llm.errors import LLMClientError
@@ -10,6 +10,10 @@ from app.schemas.support_request import (
     SUPPORT_REQUEST_SCHEMA_NAME,
 )
 
+from app.models.support_request_validation import (
+    SupportRequestSemanticError,
+    validate_support_request,
+)
 
 DEVELOPER_INSTRUCTION = """
 Проанализируй обращение клиента службы поддержки.
@@ -18,6 +22,22 @@ DEVELOPER_INSTRUCTION = """
 Определи категорию, срочность и недостающие сведения.
 """.strip()
 
+MAX_REPAIR_ATTEMPTS = 1
+
+class StructuredResultError(RuntimeError):
+    pass
+
+
+class ModelRefusalError(StructuredResultError):
+    pass
+
+
+class IncompleteStructuredResultError(StructuredResultError):
+    pass
+
+
+class StructuredResultValidationError(StructuredResultError):
+    pass
 
 def build_messages(user_text: str) -> list[Message]:
     return [
@@ -35,39 +55,101 @@ def build_messages(user_text: str) -> list[Message]:
         },
     ]
 
+def build_repair_messages(
+    user_text: str,
+    issues: tuple[str, ...],
+) -> list[Message]:
+    messages = build_messages(user_text)
+    issue_text = "\n".join(f"- {issue}" for issue in issues)
 
-def print_result(result: LLMResult) -> None:
+    messages[0] = {
+        "role": "developer",
+        "content": (
+            f"{DEVELOPER_INSTRUCTION}\n\n"
+            "Предыдущий результат не прошел проверку.\n"
+            "Исправь перечисленные противоречия:\n"
+            f"{issue_text}"
+        ),
+    }
+    return messages
+
+def parse_result(
+    result: LLMResult,
+) -> SupportRequestAnalysis:
     if result.refusal is not None:
-        print(f"Модель отказалась отвечать: {result.refusal}")
-        return
+        raise ModelRefusalError(result.refusal)
 
     if result.finish_reason == "length":
-        print("Ответ остановлен из-за ограничения длины.")
-        return
+        raise IncompleteStructuredResultError(
+            "Модели не хватило разрешенного количества токенов."
+        )
 
     if result.finish_reason != "stop":
-        print(
-            "Генерация завершилась с неожиданной причиной: "
-            f"{result.finish_reason}"
+        raise StructuredResultError(
+            "Неожиданная причина завершения генерации: "
+            f"{result.finish_reason}."
         )
-        return
 
     if result.text is None:
-        print("Модель не вернула структурированный результат.")
-        return
+        raise StructuredResultValidationError(
+            "Модель не вернула структурированный результат."
+        )
 
     try:
-        payload = json.loads(result.text)
-    except json.JSONDecodeError:
-        print("Провайдер вернул строку с некорректным JSON.")
-        return
+        return SupportRequestAnalysis.model_validate_json(result.text)
+    except ValidationError as error:
+        raise StructuredResultValidationError(
+            "Ответ модели не соответствует контракту."
+        ) from error
 
-    print("\nСтруктурированный результат:")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+def request_analysis(
+    llm_client: LLMClient,
+    user_text: str,
+) -> tuple[SupportRequestAnalysis, LLMResult, int]:
+    messages = build_messages(user_text)
+
+    for repair_attempts in range(MAX_REPAIR_ATTEMPTS + 1):
+        result = llm_client.generate_structured(
+            messages=messages,
+            schema_name=SUPPORT_REQUEST_SCHEMA_NAME,
+            schema=SUPPORT_REQUEST_SCHEMA,
+        )
+        analysis = parse_result(result)
+
+        try:
+            validate_support_request(analysis, user_text)
+        except SupportRequestSemanticError as error:
+            if repair_attempts == MAX_REPAIR_ATTEMPTS:
+                raise
+
+            messages = build_repair_messages(
+                user_text,
+                error.issues,
+            )
+            continue
+
+        return analysis, result, repair_attempts
+
+    raise RuntimeError("Недостижимое состояние repair flow.")
+
+def print_result(
+        analysis: SupportRequestAnalysis,
+        result: LLMResult,
+        repair_attempts: int,
+) -> None:
+    print("\nПроверенный результат:")
+    print(
+        json.dumps(
+            analysis.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     print(f"\nМодель: {result.model}")
     print(f"Причина завершения: {result.finish_reason}")
     print(f"Всего токенов: {result.total_tokens}")
     print(f"ID ответа: {result.response_id}")
+    print(f"Исправляющих запросов: {repair_attempts}")
 
 
 def main() -> None:
@@ -87,18 +169,34 @@ def main() -> None:
 
     llm_client = LLMClient(settings)
     try:
-        result = llm_client.generate_structured(
-            messages=build_messages(user_text),
-            schema_name=SUPPORT_REQUEST_SCHEMA_NAME,
-            schema=SUPPORT_REQUEST_SCHEMA,
+        analysis, result, repair_attempts = request_analysis(
+            llm_client,
+            user_text,
         )
     except LLMClientError as error:
-        print(f"Не удалось проанализировать обращение: {error}")
+        print(f"Не удалось обратиться к модели: {error}")
+        return
+    except ModelRefusalError as error:
+        print(f"Модель отказалась анализировать обращение: {error}")
+        return
+    except IncompleteStructuredResultError as error:
+        print(f"Получен незавершенный ответ: {error}")
+        return
+    except StructuredResultValidationError as error:
+        print(f"Ответ не прошел проверку: {error}")
+        return
+    except StructuredResultError as error:
+        print(f"Не удалось обработать результат: {error}")
+        return
+    except SupportRequestSemanticError as error:
+        print("Результат не прошел смысловую проверку:")
+        for issue in error.issues:
+            print(f"- {issue}")
         return
     finally:
         llm_client.close()
 
-    print_result(result)
+    print_result(analysis, result, repair_attempts)
 
 
 if __name__ == "__main__":

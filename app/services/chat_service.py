@@ -16,7 +16,7 @@ from app.llm.client import (
 from app.llm.errors import LLMClientError
 from app.prompts.support_chat import SUPPORT_CHAT_PROMPT
 from app.prompts.template import PromptTemplate
-from app.conversation_summary_service import (
+from app.services.conversation_summary_service import (
     ConversationSummaryError,
     ConversationSummaryService,
 )

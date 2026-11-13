@@ -6,9 +6,9 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.chat_history import SlidingWindowHistory, TokenCounter
-from app.chat_service import ChatService
+from app.services.chat_service import ChatService
 from app.config import Settings
-from app.conversation_summary_service import ConversationSummaryService
+from app.services.conversation_summary_service import ConversationSummaryService
 from app.llm.client import LLMClient
 from app.prompts.support_chat import get_support_chat_prompt
 from app.prompts.template import PromptTemplate

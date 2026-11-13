@@ -3,12 +3,12 @@ from pydantic import ValidationError
 from app.config import Settings
 from app.console import run_console
 from app.llm.client import LLMClient
-from app.chat_service import ChatService
+from app.services.chat_service import ChatService
 from app.chat_history import (
     SlidingWindowHistory,
     TokenCounter,
 )
-from app.conversation_summary_service import (
+from app.services.conversation_summary_service import (
     ConversationSummaryService,
 )
 

@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from app.chat_service import (
+from app.services.chat_service import (
     ChatReply,
     ChatService,
     ChatServiceError,

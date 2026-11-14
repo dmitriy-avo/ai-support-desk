@@ -97,7 +97,6 @@ class LLMClient:
         except openai.APIError as error:
             raise self._convert_error(error) from error
 
-
     def _generate_once(self, messages: list[Message]) -> LLMResult:
         response = self._client.chat.completions.create(
             model=self._settings.model,
@@ -105,22 +104,7 @@ class LLMClient:
             temperature=self._settings.temperature,
             max_completion_tokens=self._settings.max_output_tokens,
         )
-
-        if not response.choices:
-            raise LLMProviderError("Провайдер вернул ответ без вариантов продолжения.")
-
-        choice = response.choices[0]
-        usage = response.usage
-
-        return LLMResult(
-            text=choice.message.content,
-            model=response.model,
-            finish_reason=choice.finish_reason,
-            prompt_tokens=usage.prompt_tokens if usage is not None else None,
-            completion_tokens=usage.completion_tokens if usage is not None else None,
-            total_tokens=usage.total_tokens if usage is not None else None,
-            response_id=response.id,
-        )
+        return self._to_result(response)
 
     def _generate_structured_once(
             self,

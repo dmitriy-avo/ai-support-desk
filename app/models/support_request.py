@@ -26,12 +26,16 @@ class MissingField(StrEnum):
 class SupportRequestAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    category: SupportCategory
+    category: SupportCategory = Field(description="Категория обращения клиента.")
     order_id: str | None = Field(description="Номер заказа или null, если он не указан.")
     product: str | None = Field(description="Название товара или null, если оно не указано.")
-    urgency: Urgency
+    problem_description: str | None = Field(
+        description="Краткое описание проблемы или null, если суть обращения непонятна.")
+    urgency: Urgency = Field(description="Срочность обращения.")
     missing_fields: list[MissingField] = Field(
         description="Сведения, которых не хватает для обработки обращения.")
+    confidence: float = Field(ge=0, le=1,
+                              description="Оценка уверенности модели в анализе от 0 до 1.")
 
     @field_validator("order_id")
     @classmethod
@@ -49,6 +53,19 @@ class SupportRequestAnalysis(BaseModel):
                 "Номер заказа должен содержать только цифры."
             )
         return cleaned
+
+    @field_validator("product", "problem_description")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError(
+                "Текстовое поле не должно быть пустым."
+            )
+        return normalized
 
     @field_validator("missing_fields")
     @classmethod

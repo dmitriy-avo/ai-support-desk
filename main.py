@@ -4,6 +4,7 @@ from app.config import Settings
 from app.console import run_console
 from app.llm.client import LLMClient
 from app.services.chat_service import ChatService
+from app.services.support_request_analyzer import SupportRequestAnalyzer
 from app.chat_history import (
     SlidingWindowHistory,
     TokenCounter,
@@ -36,11 +37,13 @@ def main() -> None:
         history_policy=history_policy,
         summary_service=summary_service,
     )
+    request_analyzer = SupportRequestAnalyzer(llm_client)
 
 
     try:
         run_console(
             chat_service,
+            request_analyzer,
             app_env=settings.app_env,
             configured_model=settings.model,
         )

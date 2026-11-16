@@ -17,12 +17,6 @@ from app.services.support_request_review import (
     decide_review,
 )
 
-from app.services.order_status_assistant import (
-    OrderStatusAnswer,
-    OrderStatusAssistant,
-    OrderStatusAssistantError,
-)
-
 
 
 def print_usage(result: ChatReply) -> None:
@@ -61,7 +55,10 @@ def print_metadata(result: ChatReply) -> None:
     print(f"Промпт: {result.prompt_id}@{result.prompt_version}")
     print(f"Время ответа: {result.elapsed_seconds:.2f} с")
     print_usage(result)
-    print(f"ID ответа: {result.response_id}")
+    print(f"Инструментов выполнено: {result.tool_calls_count}")
+    if result.tool_names:
+        print(f"Инструменты: {', '.join(result.tool_names)}")
+    print(f"ID ответов: {', '.join(result.response_ids)}")
 
 
 def print_analysis(
@@ -89,31 +86,10 @@ def print_analysis(
     print(f"ID ответа: {result.response_id}")
 
 
-def print_order_status_answer(result: OrderStatusAnswer) -> None:
-    print(f"\nAssistant: {result.text}")
-    print(
-        "Инструмент использован: "
-        f"{'да' if result.tool_used else 'нет'}"
-    )
-
-    if result.order_id is not None:
-        print(f"Номер заказа: {result.order_id}")
-
-    print(
-        f"Промпт: {result.prompt_id}@{result.prompt_version}"
-    )
-    print(f"Всего токенов: {result.total_tokens}")
-    print(
-        "ID ответов: "
-        f"{', '.join(result.response_ids)}"
-    )
-
-
 
 def run_console(
     service: ChatService,
     analyzer: SupportRequestAnalyzer,
-    order_status_assistant: OrderStatusAssistant,
     app_env: str,
     configured_model: str,
 ) -> None:
@@ -125,7 +101,7 @@ def run_console(
     print(
         "Команды: /new — новый диалог, "
         "/analyze — анализ обращения, "
-        "/order — статус заказа, /exit — выход."
+        "/exit — выход."
     )
 
     print("Во время ответа нажмите Ctrl+C, чтобы отменить генерацию.")
@@ -156,19 +132,6 @@ def run_console(
             print_analysis(decision)
             continue
 
-        if command == "/order":
-            request_text = input("Вопрос о заказе: ")
-
-            try:
-                order_result = order_status_assistant.answer(
-                    request_text
-                )
-            except OrderStatusAssistantError as error:
-                print(f"Ошибка проверки заказа: {error}")
-                continue
-
-            print_order_status_answer(order_result)
-            continue
 
         stream = service.stream_reply(session_id, user_text)
         result: ChatReply | None = None

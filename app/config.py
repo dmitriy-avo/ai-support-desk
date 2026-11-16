@@ -48,6 +48,13 @@ class Settings(BaseSettings):
         validation_alias="APP_ENV",
     )
 
+    tool_max_steps: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        validation_alias="TOOL_MAX_STEPS"
+    )
+
 
     model_config = SettingsConfigDict(
         env_file=".env",

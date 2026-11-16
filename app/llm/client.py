@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from openai.types.chat import ChatCompletion
 from dataclasses import dataclass

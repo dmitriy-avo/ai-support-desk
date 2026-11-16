@@ -24,14 +24,23 @@ from app.llm.errors import (
 )
 
 
-Message = dict[str, str]
+Message = dict[str, Any]
 JsonSchema = dict[str, Any]
+ToolDefinition = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: str
 
 
 @dataclass(frozen=True)
 class LLMResult:
     text: str | None
     refusal: str | None
+    tool_calls: tuple[ToolCall, ...]
     model: str
     finish_reason: str | None
     prompt_tokens: int | None
@@ -88,6 +97,21 @@ class LLMClient:
         except openai.APIError as error:
             raise self._convert_error(error) from error
 
+    def generate_with_tools(
+            self,
+            messages: list[Message],
+            tools: list[ToolDefinition],
+            tool_choice: Literal["auto", "none"] = "auto",
+    ) -> LLMResult:
+        try:
+            return self._generate_with_tools_once(
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+        except openai.APIError as error:
+            raise self._convert_error(error) from error
+
     def stream(
             self,
             messages: list[Message],
@@ -128,6 +152,25 @@ class LLMClient:
         )
         return self._to_result(response)
 
+    def _generate_with_tools_once(
+            self,
+            messages: list[Message],
+            tools: list[ToolDefinition],
+            tool_choice: Literal["auto", "none"],
+    ) -> LLMResult:
+        response = self._client.chat.completions.create(
+            model=self._settings.model,
+            messages=messages,
+            temperature=self._settings.temperature,
+            max_completion_tokens=(
+                self._settings.max_output_tokens
+            ),
+            tools=tools,
+            tool_choice=tool_choice,
+            parallel_tool_calls=False,
+        )
+        return self._to_result(response)
+
     @staticmethod
     def _to_result(response: ChatCompletion) -> LLMResult:
         if not response.choices:
@@ -137,10 +180,18 @@ class LLMClient:
 
         choice = response.choices[0]
         usage = response.usage
-
+        tool_calls = tuple(
+            ToolCall(
+                id=tool_call.id,
+                name=tool_call.function.name,
+                arguments=tool_call.function.arguments,
+            )
+            for tool_call in (choice.message.tool_calls or [])
+        )
         return LLMResult(
             text=choice.message.content,
             refusal=choice.message.refusal,
+            tool_calls=tool_calls,
             model=response.model,
             finish_reason=choice.finish_reason,
             prompt_tokens=(

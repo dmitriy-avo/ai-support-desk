@@ -12,6 +12,7 @@ from app.chat_history import (
 from app.services.conversation_summary_service import (
     ConversationSummaryService,
 )
+from app.services.order_status_assistant import OrderStatusAssistant
 
 
 def main() -> None:
@@ -38,12 +39,14 @@ def main() -> None:
         summary_service=summary_service,
     )
     request_analyzer = SupportRequestAnalyzer(llm_client)
+    order_status_assistant = OrderStatusAssistant(llm_client)
 
 
     try:
         run_console(
             chat_service,
             request_analyzer,
+            order_status_assistant,
             app_env=settings.app_env,
             configured_model=settings.model,
         )
